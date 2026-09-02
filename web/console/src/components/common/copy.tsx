@@ -21,13 +21,16 @@ function useCopy(): { copied: boolean; copy: (value: string | (() => string)) =>
   const timer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // React StrictMode runs an extra setup/cleanup cycle in development. The
+    // setup must restore this flag or every later copy resolves as if the
+    // component had already unmounted, so the icon never changes to a check.
+    alive.current = true;
+    return () => {
       alive.current = false;
       window.clearTimeout(timer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const copy = useCallback((value: string | (() => string)) => {
     // A function so a caller whose text is expensive to materialise — a whole

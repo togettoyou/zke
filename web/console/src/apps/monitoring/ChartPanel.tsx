@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
-import { Maximize2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Code2, Maximize2 } from "lucide-react";
 
 import { useMetricsQueries } from "@/api/queries/observability";
 import type { MetricsQueryIssue, MetricsQuerySeries } from "@/api/types";
 import { isForbidden } from "@/api/errors";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
+import { CopyIconButton } from "@/components/common/copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,6 +53,8 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
   const palette = useChartPalette();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const [expanded, setExpanded] = useState(false);
+  const [queryOpen, setQueryOpen] = useState(false);
+  const queryTitleRef = useRef<HTMLHeadingElement>(null);
 
   const results = useMetricsQueries(
     panel.queries.map((query) => ({
@@ -95,6 +98,21 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
+  const expressions = results.flatMap((result, index) => {
+    const expression = result.data?.expression;
+    if (!expression) return [];
+    return [
+      {
+        name:
+          panel.queries[index]?.label ||
+          result.data?.title ||
+          panel.queries[index]?.name ||
+          "MetricsQL",
+        expression,
+      },
+    ];
+  });
+
   const toggle = (id: string) =>
     setHidden((current) => {
       const next = new Set(current);
@@ -137,6 +155,17 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
             >
               更新中…
             </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`查看${panel.title}的查询语句`}
+              title="查看查询语句"
+              disabled={expressions.length === 0}
+              onClick={() => setQueryOpen(true)}
+            >
+              <Code2 />
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -229,6 +258,42 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
           ) : (
             <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={queryOpen} onOpenChange={setQueryOpen}>
+        <DialogContent
+          aria-describedby={undefined}
+          className="w-[min(880px,calc(100vw-2rem))]"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            queryTitleRef.current?.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle ref={queryTitleRef} tabIndex={-1} className="outline-none">
+              {panel.title} · 查询语句
+            </DialogTitle>
+            <DialogDescription>
+              以下是当前图表实际参数对应的可移植 MetricsQL。Server
+              执行时仍会强制注入目标集群条件，展示和复制内容不包含 ZKE 集群标识。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {expressions.map((item) => (
+              <section
+                key={`${item.name}:${item.expression}`}
+                className="border-border rounded-control border"
+              >
+                <div className="border-border bg-surface-muted flex items-center justify-between border-b px-3 py-2">
+                  <span className="text-foreground text-xs font-medium">{item.name}</span>
+                  <CopyIconButton value={item.expression} label={`复制${item.name}查询语句`} />
+                </div>
+                <pre className="zke-mono text-foreground overflow-x-auto p-3 text-xs leading-relaxed whitespace-pre-wrap">
+                  {item.expression}
+                </pre>
+              </section>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </>

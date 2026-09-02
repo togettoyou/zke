@@ -105,8 +105,10 @@ func TestKubeStateMetricsRoleIsReadOnlyAndExcludesSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	resources := make(map[string]bool)
 	for _, rule := range role.Rules {
 		for _, resource := range rule.Resources {
+			resources[resource] = true
 			if resource == "secrets" || resource == "configmaps" {
 				t.Fatalf("kube-state-metrics may read %q", resource)
 			}
@@ -118,6 +120,11 @@ func TestKubeStateMetricsRoleIsReadOnlyAndExcludesSecrets(t *testing.T) {
 		}
 	}
 	assertNoWriteAnywhere(t, role)
+	for _, resource := range []string{"services", "ingresses"} {
+		if !resources[resource] {
+			t.Errorf("kube-state-metrics role does not cover %s", resource)
+		}
+	}
 
 	deployment, err := client.AppsV1().Deployments(collectorNamespace).Get(
 		context.Background(), observability.KubeStateName, metav1.GetOptions{},
@@ -130,7 +137,9 @@ func TestKubeStateMetricsRoleIsReadOnlyAndExcludesSecrets(t *testing.T) {
 	// bounds what it may watch, this bounds what it may report.
 	if !strings.Contains(args, "--metric-allowlist=") ||
 		!strings.Contains(args, "kube_node_status_allocatable") ||
-		!strings.Contains(args, "kube_replicaset_owner") {
+		!strings.Contains(args, "kube_replicaset_owner") ||
+		!strings.Contains(args, "kube_service_info") ||
+		!strings.Contains(args, "kube_ingress_info") {
 		t.Fatalf("kube-state-metrics args do not carry the allow list: %s", args)
 	}
 	if strings.Contains(args, "secret") {

@@ -925,7 +925,7 @@ export const STORAGE_VIEWS: MetricsViews = [
         id: "pvc-utilization",
         title: "PVC 使用率",
         unit: "ratio",
-        labels: ["namespace", "persistentvolumeclaim"],
+        labels: ["namespace"],
         fullScale: true,
         emptyNote:
           "该视图来自 kubelet 的卷统计端点，只统计已被 Pod 挂载的 PVC。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
@@ -1384,6 +1384,71 @@ export const KUBERNETES_VIEWS: MetricsViews = [
       },
     ],
   },
+  {
+    id: "namespace-inventory",
+    label: "Namespace 资源大盘",
+    description:
+      "按 Namespace 展示对象规模与容量申请。Secret 和 ConfigMap 不进入后台指标采集，避免向常驻采集器授予敏感配置对象的全集读取权限。",
+    top: false,
+    namespace: true,
+    panels: [
+      {
+        id: "namespace-controller-counts",
+        title: "控制器数量",
+        unit: "count",
+        labels: ["namespace"],
+        queries: [
+          { name: "namespace_statefulsets", label: "StatefulSet", requires: KUBE_STATE },
+          { name: "namespace_daemonsets", label: "DaemonSet", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "namespace-job-counts",
+        title: "Job 与 CronJob",
+        unit: "count",
+        labels: ["namespace"],
+        queries: [
+          { name: "namespace_jobs", label: "Job", requires: KUBE_STATE },
+          { name: "namespace_cronjobs", label: "CronJob", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "namespace-active-jobs",
+        title: "活跃 Job 与 CronJob",
+        unit: "count",
+        labels: ["namespace"],
+        queries: [
+          { name: "namespace_active_jobs", label: "Job", requires: KUBE_STATE },
+          { name: "namespace_active_cronjobs", label: "CronJob", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "namespace-service-counts",
+        title: "Service 与 Ingress",
+        unit: "count",
+        labels: ["namespace"],
+        queries: [
+          { name: "namespace_services", label: "Service", requires: KUBE_STATE },
+          { name: "namespace_loadbalancers", label: "LoadBalancer", requires: KUBE_STATE },
+          { name: "namespace_ingresses", label: "Ingress", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "namespace-pvc-counts",
+        title: "PVC 数量",
+        unit: "count",
+        labels: ["namespace"],
+        queries: [{ name: "namespace_pvcs", requires: KUBE_STATE }],
+      },
+      {
+        id: "namespace-pvc-requests",
+        title: "PVC 申请容量",
+        unit: "bytes",
+        labels: ["namespace", "persistentvolumeclaim"],
+        queries: [{ name: "namespace_pvc_storage_requests", requires: KUBE_STATE }],
+      },
+    ],
+  },
 ];
 
 /* ── 采集质量 ─────────────────────────────────────────────────────────── */
@@ -1606,6 +1671,27 @@ export const COMPONENT_VIEWS: MetricsViews = [
     namespace: false,
     panels: [
       {
+        id: "apiserver-health-resources",
+        title: "健康度",
+        unit: "ratio",
+        labels: ["instance"],
+        queries: [{ name: "apiserver_up", label: "健康" }],
+      },
+      {
+        id: "apiserver-cpu",
+        title: "CPU",
+        unit: "millicores",
+        labels: ["instance"],
+        queries: [{ name: "apiserver_cpu" }],
+      },
+      {
+        id: "apiserver-memory",
+        title: "内存",
+        unit: "bytes",
+        labels: ["instance"],
+        queries: [{ name: "apiserver_memory" }],
+      },
+      {
         id: "apiserver-requests",
         title: "请求速率",
         unit: "ops_per_second",
@@ -1633,6 +1719,133 @@ export const COMPONENT_VIEWS: MetricsViews = [
         labels: ["job", "instance"],
         queries: [{ name: "apiserver_watch_events" }],
       },
+      {
+        id: "apiserver-read-write",
+        title: "读写请求速率",
+        unit: "ops_per_second",
+        labels: ["instance", "verb"],
+        queries: [
+          { name: "apiserver_read_requests", label: "读" },
+          { name: "apiserver_write_requests", label: "写" },
+          { name: "apiserver_self_requests", label: "自身" },
+        ],
+      },
+      {
+        id: "apiserver-availability",
+        title: "可用率",
+        unit: "ratio",
+        labels: ["instance"],
+        fullScale: true,
+        queries: [
+          { name: "apiserver_availability", label: "整体" },
+          { name: "apiserver_read_availability", label: "读" },
+          { name: "apiserver_write_availability", label: "写" },
+        ],
+      },
+      {
+        id: "apiserver-error-budget",
+        title: "错误预算消耗率",
+        unit: "ratio",
+        labels: ["instance"],
+        fullScale: true,
+        queries: [{ name: "apiserver_error_budget" }],
+      },
+      {
+        id: "apiserver-read-write-errors",
+        title: "读写错误率",
+        unit: "ops_per_second",
+        labels: ["instance", "code"],
+        queries: [
+          { name: "apiserver_read_errors", label: "读" },
+          { name: "apiserver_write_errors", label: "写" },
+        ],
+      },
+      {
+        id: "apiserver-average-latency",
+        title: "平均请求延迟",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [
+          { name: "apiserver_latency_average", label: "整体" },
+          { name: "apiserver_read_latency_average", label: "读" },
+          { name: "apiserver_write_latency_average", label: "写" },
+        ],
+      },
+      {
+        id: "apiserver-response-size",
+        title: "P99 响应体大小",
+        unit: "bytes",
+        labels: ["instance"],
+        queries: [{ name: "apiserver_response_size" }],
+      },
+      {
+        id: "apiserver-events",
+        title: "对象列表异常事件",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [
+          { name: "apiserver_too_many_objects", label: "对象过多" },
+          { name: "apiserver_too_old_objects", label: "对象过旧" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "controller-manager",
+    label: "Controller Manager",
+    description: CONTROL_PLANE_NOTE,
+    top: true,
+    namespace: false,
+    panels: [
+      {
+        id: "controller-manager-up",
+        title: "健康度",
+        unit: "ratio",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_up" }],
+      },
+      {
+        id: "controller-manager-resources",
+        title: "CPU",
+        unit: "millicores",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_cpu" }],
+      },
+      {
+        id: "controller-manager-memory",
+        title: "内存",
+        unit: "bytes",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_memory" }],
+      },
+      {
+        id: "controller-manager-api",
+        title: "Kubernetes API 请求速率",
+        unit: "ops_per_second",
+        labels: ["instance", "code", "verb"],
+        queries: [{ name: "controller_manager_rest_requests" }],
+      },
+      {
+        id: "controller-manager-workqueue",
+        title: "工作队列深度",
+        unit: "count",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_workqueue_depth" }],
+      },
+      {
+        id: "controller-manager-workqueue-adds",
+        title: "工作队列新增速率",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_workqueue_adds" }],
+      },
+      {
+        id: "controller-manager-workqueue-latency",
+        title: "工作队列 P99 等待",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "controller_manager_workqueue_latency" }],
+      },
     ],
   },
   {
@@ -1643,6 +1856,34 @@ export const COMPONENT_VIEWS: MetricsViews = [
     namespace: false,
     panels: [
       {
+        id: "scheduler-health",
+        title: "健康度",
+        unit: "ratio",
+        labels: ["instance"],
+        queries: [{ name: "scheduler_up" }],
+      },
+      {
+        id: "scheduler-resources",
+        title: "CPU",
+        unit: "millicores",
+        labels: ["instance"],
+        queries: [{ name: "scheduler_cpu" }],
+      },
+      {
+        id: "scheduler-memory",
+        title: "内存",
+        unit: "bytes",
+        labels: ["instance"],
+        queries: [{ name: "scheduler_memory" }],
+      },
+      {
+        id: "scheduler-api",
+        title: "Kubernetes API 请求速率",
+        unit: "ops_per_second",
+        labels: ["instance", "code", "verb"],
+        queries: [{ name: "scheduler_rest_requests" }],
+      },
+      {
         id: "scheduler-pending",
         title: "待调度 Pod",
         unit: "count",
@@ -1652,9 +1893,74 @@ export const COMPONENT_VIEWS: MetricsViews = [
       {
         id: "scheduler-attempts",
         title: "成功调度尝试次数 P90",
-        unit: "seconds",
-        labels: ["job", "instance"],
+        unit: "count",
+        labels: ["instance"],
         queries: [{ name: "scheduler_attempts" }],
+      },
+    ],
+  },
+  {
+    id: "proxy",
+    label: "Proxy",
+    description: "kube-proxy 不是所有发行版都提供独立 metrics 端点。" + CONTROL_PLANE_NOTE,
+    top: true,
+    namespace: false,
+    panels: [
+      {
+        id: "proxy-health",
+        title: "健康度",
+        unit: "ratio",
+        labels: ["instance"],
+        queries: [{ name: "proxy_up" }],
+      },
+      {
+        id: "proxy-cpu",
+        title: "CPU",
+        unit: "millicores",
+        labels: ["instance"],
+        queries: [{ name: "proxy_cpu" }],
+      },
+      {
+        id: "proxy-memory",
+        title: "内存",
+        unit: "bytes",
+        labels: ["instance"],
+        queries: [{ name: "proxy_memory" }],
+      },
+      {
+        id: "proxy-api",
+        title: "Kubernetes API 请求速率",
+        unit: "ops_per_second",
+        labels: ["instance", "code", "verb"],
+        queries: [{ name: "proxy_rest_requests" }],
+      },
+      {
+        id: "proxy-rules-sync",
+        title: "规则同步速率",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "proxy_rules_sync" }],
+      },
+      {
+        id: "proxy-rules-latency",
+        title: "规则同步 P99 延迟",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "proxy_rules_sync_latency" }],
+      },
+      {
+        id: "proxy-network-programming",
+        title: "网络编程速率",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "proxy_network_programming" }],
+      },
+      {
+        id: "proxy-network-programming-latency",
+        title: "网络编程 P99 延迟",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "proxy_network_programming_latency" }],
       },
     ],
   },
@@ -1716,6 +2022,51 @@ export const COMPONENT_VIEWS: MetricsViews = [
         labels: ["node"],
         queries: [{ name: "node_kubelet_pleg_latency" }],
       },
+      {
+        id: "kubelet-pod-start",
+        title: "Pod 启动速率",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "kubelet_pod_start_rate" }],
+      },
+      {
+        id: "kubelet-pod-worker",
+        title: "Pod Worker P99 耗时",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "kubelet_pod_worker_latency" }],
+      },
+      {
+        id: "kubelet-storage",
+        title: "存储操作速率与错误",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [
+          { name: "kubelet_storage_operations", label: "操作" },
+          { name: "kubelet_storage_errors", label: "错误" },
+        ],
+      },
+      {
+        id: "kubelet-storage-latency",
+        title: "存储操作 P99 耗时",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "kubelet_storage_latency" }],
+      },
+      {
+        id: "kubelet-cgroup",
+        title: "Cgroup 操作速率",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "kubelet_cgroup_operations" }],
+      },
+      {
+        id: "kubelet-cgroup-latency",
+        title: "Cgroup 操作 P99 耗时",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "kubelet_cgroup_latency" }],
+      },
     ],
   },
   {
@@ -1763,6 +2114,77 @@ export const COMPONENT_VIEWS: MetricsViews = [
         queries: [{ name: "coredns_forward_failures" }],
       },
       {
+        id: "coredns-message-size",
+        title: "P99 请求与响应大小",
+        unit: "bytes",
+        labels: ["instance", "proto"],
+        queries: [
+          { name: "coredns_request_size", label: "请求" },
+          { name: "coredns_response_size", label: "响应" },
+        ],
+      },
+      {
+        id: "coredns-success-rate",
+        title: "DNS 成功率",
+        unit: "ratio",
+        labels: ["instance", "proto"],
+        fullScale: true,
+        queries: [{ name: "coredns_success_rate" }],
+      },
+      {
+        id: "coredns-request-dimensions",
+        title: "请求维度",
+        unit: "ops_per_second",
+        labels: ["pod", "type", "zone"],
+        queries: [
+          { name: "coredns_requests_by_pod", label: "Pod" },
+          { name: "coredns_requests_by_type", label: "QType" },
+          { name: "coredns_requests_by_zone", label: "Zone" },
+        ],
+      },
+      {
+        id: "coredns-response-codes",
+        title: "响应码与正常/异常响应",
+        unit: "ops_per_second",
+        labels: ["rcode"],
+        queries: [
+          { name: "coredns_responses_by_code", label: "全部" },
+          { name: "coredns_normal_responses", label: "正常" },
+          { name: "coredns_abnormal_responses", label: "异常" },
+        ],
+      },
+      {
+        id: "coredns-upstream-dimensions",
+        title: "按上游请求",
+        unit: "ops_per_second",
+        labels: ["to"],
+        queries: [{ name: "coredns_requests_by_upstream" }],
+      },
+      {
+        id: "coredns-upstream",
+        title: "上游请求与健康检查失败",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [
+          { name: "coredns_forward_requests", label: "请求" },
+          { name: "coredns_healthcheck_failures", label: "健康检查失败" },
+        ],
+      },
+      {
+        id: "coredns-upstream-latency",
+        title: "上游 P99 延迟",
+        unit: "seconds",
+        labels: ["instance"],
+        queries: [{ name: "coredns_forward_latency" }],
+      },
+      {
+        id: "coredns-cache-misses",
+        title: "缓存未命中",
+        unit: "ops_per_second",
+        labels: ["instance"],
+        queries: [{ name: "coredns_cache_misses" }],
+      },
+      {
         id: "coredns-cpu",
         title: "CPU 用量",
         unit: "millicores",
@@ -1787,7 +2209,194 @@ export const COMPONENT_VIEWS: MetricsViews = [
   },
 ];
 
+function workloadObjectPanels(
+  prefix: "deployment" | "statefulset" | "daemonset",
+  replicas: {
+    requested: string;
+    ready: string;
+    updated?: string;
+    available?: string;
+    unavailable?: string;
+  },
+): readonly Panel[] {
+  const dimensions = ["namespace", prefix] as const;
+  return [
+    {
+      id: `${prefix}-age`,
+      title: "运行时长",
+      unit: "seconds",
+      labels: dimensions,
+      queries: [{ name: `${prefix}_age`, requires: KUBE_STATE }],
+    },
+    ...(prefix === "statefulset"
+      ? [
+          {
+            id: "statefulset-generation",
+            title: "Generation",
+            unit: "count" as const,
+            labels: dimensions,
+            queries: [{ name: "statefulset_generation", requires: KUBE_STATE }],
+          },
+        ]
+      : []),
+    {
+      id: `${prefix}-replicas`,
+      title: "副本趋势",
+      unit: "count",
+      labels: dimensions,
+      queries: [
+        { name: replicas.requested, label: "期望", requires: KUBE_STATE },
+        { name: replicas.ready, label: "就绪", requires: KUBE_STATE },
+        ...(replicas.updated
+          ? [{ name: replicas.updated, label: "已更新", requires: KUBE_STATE }]
+          : []),
+        ...(replicas.available
+          ? [{ name: replicas.available, label: "可用", requires: KUBE_STATE }]
+          : []),
+        ...(replicas.unavailable
+          ? [{ name: replicas.unavailable, label: "不可用", requires: KUBE_STATE }]
+          : []),
+      ],
+    },
+    {
+      id: `${prefix}-cpu-capacity`,
+      title: "CPU 用量、申请与限制",
+      unit: "millicores",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_cpu_usage`, label: "用量", requires: KUBE_STATE },
+        { name: `${prefix}_cpu_requests`, label: "申请", requires: KUBE_STATE },
+        { name: `${prefix}_cpu_limits`, label: "限制", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-cpu-ratios`,
+      title: "CPU 用量占比",
+      unit: "ratio",
+      fullScale: true,
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_cpu_request_utilization`, label: "占申请", requires: KUBE_STATE },
+        { name: `${prefix}_cpu_limit_utilization`, label: "占限制", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-cpu-user`,
+      title: "CPU 用户态用量",
+      unit: "millicores",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [{ name: `${prefix}_cpu_user`, requires: KUBE_STATE }],
+    },
+    {
+      id: `${prefix}-memory-capacity`,
+      title: "内存用量、申请与限制",
+      unit: "bytes",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_memory_usage`, label: "用量", requires: KUBE_STATE },
+        { name: `${prefix}_memory_requests`, label: "申请", requires: KUBE_STATE },
+        { name: `${prefix}_memory_limits`, label: "限制", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-memory-ratios`,
+      title: "内存用量占比",
+      unit: "ratio",
+      fullScale: true,
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_memory_request_utilization`, label: "占申请", requires: KUBE_STATE },
+        { name: `${prefix}_memory_limit_utilization`, label: "占限制", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-sockets`,
+      title: "Socket 数",
+      unit: "count",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [{ name: `${prefix}_sockets`, requires: KUBE_STATE }],
+    },
+    {
+      id: `${prefix}-network-bandwidth`,
+      title: "网络收发",
+      unit: "bytes_per_second",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_network_receive`, label: "接收", requires: KUBE_STATE },
+        { name: `${prefix}_network_transmit`, label: "发送", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-network-packets`,
+      title: "网络包速率",
+      unit: "ops_per_second",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_network_receive_packets`, label: "接收", requires: KUBE_STATE },
+        { name: `${prefix}_network_transmit_packets`, label: "发送", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-network-errors`,
+      title: "网络错误与丢包",
+      unit: "ops_per_second",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_network_receive_errors`, label: "接收错误", requires: KUBE_STATE },
+        { name: `${prefix}_network_transmit_errors`, label: "发送错误", requires: KUBE_STATE },
+        { name: `${prefix}_network_receive_drops`, label: "接收丢包", requires: KUBE_STATE },
+        { name: `${prefix}_network_transmit_drops`, label: "发送丢包", requires: KUBE_STATE },
+      ],
+    },
+    {
+      id: `${prefix}-filesystem`,
+      title: "文件系统读写",
+      unit: "bytes_per_second",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: `${prefix}_filesystem_read`, label: "读取", requires: KUBE_STATE },
+        { name: `${prefix}_filesystem_write`, label: "写入", requires: KUBE_STATE },
+      ],
+    },
+  ];
+}
+
 export const APPLICATION_VIEWS: MetricsViews = [
+  {
+    id: "deployment",
+    label: "Deployment",
+    top: true,
+    namespace: true,
+    panels: workloadObjectPanels("deployment", {
+      requested: "deployment_replicas_requested",
+      ready: "deployment_replicas_ready",
+      updated: "deployment_replicas_updated",
+      unavailable: "deployment_replicas_unavailable",
+    }),
+  },
+  {
+    id: "statefulset",
+    label: "StatefulSet",
+    top: true,
+    namespace: true,
+    panels: workloadObjectPanels("statefulset", {
+      requested: "statefulset_replicas_requested",
+      ready: "statefulset_replicas_ready",
+      updated: "statefulset_replicas_updated",
+      available: "statefulset_replicas_available",
+    }),
+  },
+  {
+    id: "daemonset",
+    label: "DaemonSet",
+    top: true,
+    namespace: true,
+    panels: workloadObjectPanels("daemonset", {
+      requested: "daemonset_replicas_requested",
+      ready: "daemonset_replicas_ready",
+      unavailable: "daemonset_replicas_unavailable",
+    }),
+  },
   {
     id: "workload-resources",
     label: "工作负载资源",
@@ -1827,6 +2436,52 @@ export const APPLICATION_VIEWS: MetricsViews = [
           { name: "workload_replicas_unavailable", label: "缺失", requires: KUBE_STATE },
         ],
       },
+      {
+        id: "workload-cpu-ratios",
+        title: "CPU 用量占比",
+        unit: "ratio",
+        labels: ["namespace", "workload_kind", "workload"],
+        fullScale: true,
+        queries: [
+          { name: "workload_cpu_request_utilization", label: "占申请", requires: KUBE_STATE },
+          { name: "workload_cpu_limit_utilization", label: "占限制", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "workload-memory-ratios",
+        title: "内存用量占比",
+        unit: "ratio",
+        labels: ["namespace", "workload_kind", "workload"],
+        fullScale: true,
+        queries: [
+          { name: "workload_memory_request_utilization", label: "占申请", requires: KUBE_STATE },
+          { name: "workload_memory_limit_utilization", label: "占限制", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "workload-cpu-user",
+        title: "CPU 用户态用量",
+        unit: "millicores",
+        labels: ["namespace", "workload_kind", "workload"],
+        queries: [{ name: "workload_cpu_user", requires: KUBE_STATE }],
+      },
+      {
+        id: "workload-sockets",
+        title: "Socket 数",
+        unit: "count",
+        labels: ["namespace", "workload_kind", "workload"],
+        queries: [{ name: "workload_sockets", requires: KUBE_STATE }],
+      },
+      {
+        id: "workload-filesystem",
+        title: "文件系统读写",
+        unit: "bytes_per_second",
+        labels: ["namespace", "workload_kind", "workload"],
+        queries: [
+          { name: "workload_filesystem_read", label: "读取", requires: KUBE_STATE },
+          { name: "workload_filesystem_write", label: "写入", requires: KUBE_STATE },
+        ],
+      },
     ],
   },
   {
@@ -1835,6 +2490,20 @@ export const APPLICATION_VIEWS: MetricsViews = [
     top: true,
     namespace: true,
     panels: [
+      {
+        id: "pod-age",
+        title: "Pod 运行时长",
+        unit: "seconds",
+        labels: ["namespace", "pod"],
+        queries: [{ name: "pod_age", requires: KUBE_STATE }],
+      },
+      {
+        id: "pod-running-containers",
+        title: "运行中容器数",
+        unit: "count",
+        labels: ["namespace", "pod"],
+        queries: [{ name: "pod_running_containers", requires: KUBE_STATE }],
+      },
       {
         id: "pod-cpu-capacity",
         title: "CPU 用量、申请与限制",
@@ -1946,6 +2615,16 @@ const WORKLOAD_NETWORK_VIEW: MetricsView = {
         { name: "workload_network_transmit_drops", label: "发送" },
       ],
     },
+    {
+      id: "workload-network-errors",
+      title: "网络错误",
+      unit: "ops_per_second",
+      labels: ["namespace", "workload_kind", "workload"],
+      queries: [
+        { name: "workload_network_receive_errors", label: "接收" },
+        { name: "workload_network_transmit_errors", label: "发送" },
+      ],
+    },
   ],
 };
 
@@ -1995,7 +2674,87 @@ const POD_NETWORK_DETAIL_VIEW: MetricsView = {
   ],
 };
 
+const CLUSTER_NETWORK_VIEW: MetricsView = {
+  id: "cluster-network",
+  label: "集群网络",
+  top: false,
+  namespace: false,
+  panels: [
+    {
+      id: "cluster-network-bandwidth",
+      title: "集群网络收发带宽",
+      unit: "bytes_per_second",
+      labels: [],
+      queries: [
+        { name: "cluster_network_receive", label: "接收" },
+        { name: "cluster_network_transmit", label: "发送" },
+      ],
+    },
+    {
+      id: "cluster-network-packets",
+      title: "集群收发包速率",
+      unit: "ops_per_second",
+      labels: [],
+      queries: [
+        { name: "cluster_network_receive_packets", label: "接收" },
+        { name: "cluster_network_transmit_packets", label: "发送" },
+      ],
+    },
+    {
+      id: "cluster-network-drops",
+      title: "集群丢包速率",
+      unit: "ops_per_second",
+      labels: [],
+      queries: [
+        { name: "cluster_network_receive_drops", label: "接收" },
+        { name: "cluster_network_transmit_drops", label: "发送" },
+      ],
+    },
+  ],
+};
+
+const NAMESPACE_NETWORK_VIEW: MetricsView = {
+  id: "namespace-network",
+  label: "Namespace Pods 网络",
+  top: false,
+  namespace: true,
+  panels: [
+    {
+      id: "namespace-network-bandwidth",
+      title: "Namespace 网络收发带宽",
+      unit: "bytes_per_second",
+      labels: ["namespace"],
+      queries: [
+        { name: "namespace_network_receive", label: "接收" },
+        { name: "namespace_network_transmit", label: "发送" },
+      ],
+    },
+    {
+      id: "namespace-network-packets",
+      title: "Namespace 收发包速率",
+      unit: "ops_per_second",
+      labels: ["namespace"],
+      queries: [
+        { name: "namespace_network_receive_packets", label: "接收" },
+        { name: "namespace_network_transmit_packets", label: "发送" },
+      ],
+    },
+    {
+      id: "namespace-network-drops",
+      title: "Namespace 丢包速率",
+      unit: "ops_per_second",
+      labels: ["namespace"],
+      queries: [
+        { name: "namespace_network_receive_drops", label: "接收" },
+        { name: "namespace_network_transmit_drops", label: "发送" },
+      ],
+    },
+  ],
+};
+
 export const NETWORK_VIEWS = [
+  CLUSTER_NETWORK_VIEW,
+  NAMESPACE_NETWORK_VIEW,
   ...STORAGE_VIEWS.filter((view) => view.id === "network" || view.id === "network-saturation"),
   WORKLOAD_NETWORK_VIEW,
   POD_NETWORK_DETAIL_VIEW,
@@ -2007,8 +2766,91 @@ export const STORAGE_ONLY_VIEWS = STORAGE_VIEWS.filter((view) =>
 
 export const GPU_VIEWS: MetricsViews = [
   {
-    id: "gpu-overview",
-    label: "GPU 概览",
+    id: "gpu-cluster",
+    label: "GPU Cluster",
+    description: "集群 GPU 数量、平均利用率与显存分配概览。",
+    top: false,
+    namespace: false,
+    panels: [
+      {
+        id: "gpu-cluster-count",
+        title: "GPU 数量",
+        unit: "count",
+        labels: [],
+        queries: [{ name: "gpu_cluster_count" }],
+      },
+      {
+        id: "gpu-cluster-utilization",
+        title: "平均 GPU 利用率",
+        unit: "ratio",
+        labels: [],
+        fullScale: true,
+        queries: [{ name: "gpu_cluster_utilization" }],
+      },
+      {
+        id: "gpu-cluster-memory",
+        title: "GPU 显存",
+        unit: "bytes",
+        labels: [],
+        queries: [
+          { name: "gpu_cluster_memory_used", label: "已用" },
+          { name: "gpu_cluster_memory_total", label: "总量" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "gpu-node",
+    label: "GPU Node",
+    top: true,
+    namespace: false,
+    panels: [
+      {
+        id: "gpu-node-utilization",
+        title: "节点平均 GPU 利用率",
+        unit: "ratio",
+        labels: ["node"],
+        fullScale: true,
+        queries: [{ name: "gpu_node_utilization" }],
+      },
+      {
+        id: "gpu-node-memory",
+        title: "节点 GPU 显存",
+        unit: "bytes",
+        labels: ["node"],
+        queries: [
+          { name: "gpu_node_memory_used", label: "已用" },
+          { name: "gpu_node_memory_total", label: "总量" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "gpu-pod",
+    label: "GPU Pod",
+    top: true,
+    namespace: true,
+    panels: [
+      {
+        id: "gpu-pod-utilization",
+        title: "Pod 平均 GPU 利用率",
+        unit: "ratio",
+        labels: ["namespace", "pod"],
+        fullScale: true,
+        queries: [{ name: "gpu_pod_utilization" }],
+      },
+      {
+        id: "gpu-pod-memory",
+        title: "Pod 已用 GPU 显存",
+        unit: "bytes",
+        labels: ["namespace", "pod"],
+        queries: [{ name: "gpu_pod_memory_used" }],
+      },
+    ],
+  },
+  {
+    id: "gpu-device",
+    label: "GPU 设备明细",
     description:
       "自动发现集群中已有的 NVIDIA DCGM Exporter；ZKE 不会在没有 GPU 的集群安装额外组件。",
     top: true,
@@ -2024,6 +2866,13 @@ export const GPU_VIEWS: MetricsViews = [
           { name: "gpu_utilization", label: "GPU" },
           { name: "gpu_memory_copy_utilization", label: "显存复制" },
         ],
+      },
+      {
+        id: "gpu-device-count",
+        title: "GPU 设备计数",
+        unit: "count",
+        labels: ["node", "gpu", "pod", "namespace"],
+        queries: [{ name: "gpu_count" }],
       },
       {
         id: "gpu-memory",
@@ -2060,10 +2909,13 @@ export const GPU_VIEWS: MetricsViews = [
       },
       {
         id: "gpu-bar1",
-        title: "BAR1 已用",
+        title: "BAR1 显存",
         unit: "bytes",
         labels: ["node", "gpu", "pod", "namespace"],
-        queries: [{ name: "gpu_bar1_used" }],
+        queries: [
+          { name: "gpu_bar1_used", label: "已用" },
+          { name: "gpu_bar1_total", label: "总量" },
+        ],
       },
       {
         id: "gpu-temperature",
@@ -2104,6 +2956,68 @@ export const GPU_VIEWS: MetricsViews = [
         queries: [
           { name: "gpu_nvlink_rx", label: "接收" },
           { name: "gpu_nvlink_tx", label: "发送" },
+        ],
+      },
+      {
+        id: "gpu-engine-activity",
+        title: "计算引擎活跃度",
+        unit: "ratio",
+        labels: ["node", "gpu", "pod", "namespace"],
+        fullScale: true,
+        queries: [
+          { name: "gpu_graphics_active", label: "Graphics" },
+          { name: "gpu_dram_active", label: "DRAM" },
+          { name: "gpu_fp16_active", label: "FP16" },
+          { name: "gpu_fp32_active", label: "FP32" },
+          { name: "gpu_fp64_active", label: "FP64" },
+        ],
+      },
+      {
+        id: "gpu-clocks",
+        title: "GPU 时钟",
+        unit: "count",
+        labels: ["node", "gpu", "pod", "namespace"],
+        queries: [
+          { name: "gpu_sm_clock", label: "SM" },
+          { name: "gpu_memory_clock", label: "Memory" },
+          { name: "gpu_app_sm_clock", label: "App SM" },
+          { name: "gpu_app_memory_clock", label: "App Memory" },
+          { name: "gpu_video_clock", label: "Video" },
+        ],
+      },
+      {
+        id: "gpu-energy-temperature",
+        title: "能耗与显存温度",
+        unit: "count",
+        labels: ["node", "gpu", "pod", "namespace"],
+        queries: [
+          { name: "gpu_total_energy", label: "总能耗" },
+          { name: "gpu_memory_temperature", label: "显存温度" },
+        ],
+      },
+      {
+        id: "gpu-retired-pages",
+        title: "错误退役页",
+        unit: "count",
+        labels: ["node", "gpu", "pod", "namespace"],
+        queries: [
+          { name: "gpu_retired_sbe", label: "单比特" },
+          { name: "gpu_retired_dbe", label: "双比特" },
+        ],
+      },
+      {
+        id: "gpu-limit-violations",
+        title: "GPU 限制与降频",
+        unit: "count",
+        labels: ["node", "gpu", "pod", "namespace"],
+        queries: [
+          { name: "gpu_clock_throttle_reasons", label: "时钟降频原因" },
+          { name: "gpu_power_violation", label: "功耗" },
+          { name: "gpu_thermal_violation", label: "温度" },
+          { name: "gpu_sync_boost_violation", label: "Sync Boost" },
+          { name: "gpu_reliability_violation", label: "可靠性" },
+          { name: "gpu_board_limit_violation", label: "Board Limit" },
+          { name: "gpu_low_util_violation", label: "低利用率" },
         ],
       },
     ],

@@ -145,6 +145,49 @@ func Validate(expression, label string) error {
 	return err
 }
 
+// WithoutLabel returns a portable presentation form of expression with label
+// removed from selectors, aggregations and vector matching. Execution must
+// still use Enforce (or an equivalently scoped named-query template).
+func WithoutLabel(expression, label string) (string, error) {
+	if !validLabelName(label) {
+		return "", errors.New("metrics display label name is invalid")
+	}
+	parsed, err := metricsql.Parse(strings.TrimSpace(expression))
+	if err != nil {
+		return "", &SyntaxError{Message: err.Error()}
+	}
+	metricsql.VisitAll(parsed, func(expr metricsql.Expr) {
+		switch current := expr.(type) {
+		case *metricsql.MetricExpr:
+			for index, group := range current.LabelFilterss {
+				filters := group[:0]
+				for _, filter := range group {
+					if filter.Label != label {
+						filters = append(filters, filter)
+					}
+				}
+				current.LabelFilterss[index] = filters
+			}
+		case *metricsql.AggrFuncExpr:
+			current.Modifier.Args = withoutString(current.Modifier.Args, label)
+		case *metricsql.BinaryOpExpr:
+			current.GroupModifier.Args = withoutString(current.GroupModifier.Args, label)
+			current.JoinModifier.Args = withoutString(current.JoinModifier.Args, label)
+		}
+	})
+	return string(parsed.AppendString(nil)), nil
+}
+
+func withoutString(values []string, excluded string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != excluded {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 // placeholderTarget stands in for a real Cluster when an expression is checked
 // without one. The nil UUID is not a Cluster identifier this Server ever
 // issues, so a rewrite that escaped into a real query would select nothing.

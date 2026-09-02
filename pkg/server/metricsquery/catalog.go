@@ -2369,7 +2369,9 @@ func catalog() []Definition {
 			},
 		},
 	}
-	return append(definitions, referenceCatalog()...)
+	definitions = append(definitions, referenceCatalog()...)
+	definitions = append(definitions, parityCatalog()...)
+	return append(definitions, workloadKindCatalog(definitions)...)
 }
 
 // waitingReasons and terminatedReasons bound the container state charts to the

@@ -15700,6 +15700,7 @@ components:
       required:
         - query
         - title
+        - expression
         - kind
         - unit
         - start
@@ -15716,6 +15717,9 @@ components:
           type: string
         title:
           type: string
+        expression:
+          type: string
+          description: 实际图表查询的可移植 MetricsQL；省略由 Server 强制注入的 `zke_cluster_id`。
         kind:
           type: string
           enum: [range, instant]

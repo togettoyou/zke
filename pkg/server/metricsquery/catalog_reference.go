@@ -144,7 +144,7 @@ func componentDefinitions() []Definition {
 		componentGauge("apiserver_inflight", "API Server 并发请求", "apiserver_current_inflight_requests", UnitCount),
 		componentRate("apiserver_watch_events", "API Server Watch 事件速率", "apiserver_watch_events_total", UnitOpsPerSecond, 1),
 		componentGauge("scheduler_pending_pods", "Scheduler 待调度 Pod", "scheduler_pending_pods", UnitCount),
-		componentHistogram("scheduler_attempts", "Scheduler 成功调度尝试次数 P90", "scheduler_pod_scheduling_attempts_bucket"),
+		componentJobQuantile("scheduler_attempts", "Scheduler 成功调度尝试次数 P90", "scheduler_pod_scheduling_attempts_bucket", "kube-scheduler", UnitCount, 0.9),
 		componentRate("kubelet_runtime_operations", "Kubelet 运行时操作速率", "kubelet_runtime_operations_total", UnitOpsPerSecond, 1),
 		componentHistogram("kubelet_runtime_latency", "Kubelet 运行时操作 P99 延迟", "kubelet_runtime_operations_duration_seconds_bucket"),
 		componentGauge("kubelet_config_errors", "Kubelet 配置错误", "kubelet_node_config_error", UnitCount),

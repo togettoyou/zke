@@ -431,12 +431,16 @@ func filterMetricQueries(definitions []metricsquery.Definition, search string) [
 func metricQuerySearchAliases(name string) string {
 	switch {
 	case strings.HasPrefix(name, "control_plane_"), strings.HasPrefix(name, "apiserver_"),
-		strings.HasPrefix(name, "scheduler_"), strings.HasPrefix(name, "kubelet_"):
+		strings.HasPrefix(name, "controller_manager_"), strings.HasPrefix(name, "scheduler_"),
+		strings.HasPrefix(name, "proxy_"), strings.HasPrefix(name, "kubelet_"):
 		return "控制面 核心组件"
 	case strings.HasPrefix(name, "coredns_"):
 		return "CoreDNS DNS 网络"
 	case strings.HasPrefix(name, "workload_network_"):
 		return "工作负载网络 应用网络"
+	case strings.HasPrefix(name, "deployment_"), strings.HasPrefix(name, "statefulset_"),
+		strings.HasPrefix(name, "daemonset_"):
+		return "工作负载 应用监控 Deployment StatefulSet DaemonSet"
 	case strings.HasPrefix(name, "gpu_"):
 		return "GPU 显卡 加速器"
 	default:
@@ -830,7 +834,8 @@ func describeDigest(result kubernetesdescribe.Result) map[string]any {
 // average.
 func metricsDigest(result metricsquery.Result, minutes int) map[string]any {
 	digest := map[string]any{
-		"query": result.Query, "title": result.Title, "unit": result.Unit,
+		"query": result.Query, "title": result.Title, "expression": result.Expression,
+		"unit":           result.Unit,
 		"window_minutes": minutes, "series": metricSeriesDigest(result.Series),
 		"partial": result.Partial,
 	}

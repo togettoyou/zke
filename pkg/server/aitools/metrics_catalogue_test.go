@@ -87,6 +87,7 @@ func TestMetricsCatalogueSearchFindsExpandedMonitoringAreas(t *testing.T) {
 		"CoreDNS":            "coredns_requests",
 		"控制面":                "control_plane_up",
 		"工作负载网络":             "workload_network_receive",
+		"Deployment":         "deployment_age",
 		"GPU":                "gpu_utilization",
 		"kube-state-metrics": "cluster_cpu_requests",
 	} {
@@ -101,6 +102,20 @@ func TestMetricsCatalogueSearchFindsExpandedMonitoringAreas(t *testing.T) {
 		if !found {
 			t.Errorf("search %q did not find %q", search, want)
 		}
+	}
+}
+
+func TestMetricsDigestIncludesPortableExpression(t *testing.T) {
+	t.Parallel()
+
+	digest := metricsDigest(metricsquery.Result{
+		Query:      "cluster_cpu_usage",
+		Title:      "集群 CPU 用量",
+		Expression: `sum(rate(container_cpu_usage_seconds_total[5m]))`,
+		Unit:       metricsquery.UnitMillicores,
+	}, 60)
+	if digest["expression"] != `sum(rate(container_cpu_usage_seconds_total[5m]))` {
+		t.Fatalf("metrics digest expression = %v", digest["expression"])
 	}
 }
 

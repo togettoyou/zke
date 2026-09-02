@@ -6464,6 +6464,8 @@ export interface components {
         MetricsQueryResult: {
             query: string;
             title: string;
+            /** @description 实际图表查询的可移植 MetricsQL；省略由 Server 强制注入的 `zke_cluster_id`。 */
+            expression: string;
             /** @enum {string} */
             kind: "range" | "instant";
             /** @enum {string} */

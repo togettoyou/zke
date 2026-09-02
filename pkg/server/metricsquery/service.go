@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
+	"github.com/togettoyou/zke/pkg/server/metricsqlguard"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/validation"
@@ -224,8 +225,12 @@ type Series struct {
 }
 
 type Result struct {
-	Query       string
-	Title       string
+	Query string
+	Title string
+	// Expression is the portable form shown in the Console. It omits the
+	// mandatory Cluster label; the scoped expression is still the only one sent
+	// to storage.
+	Expression  string
 	Unit        Unit
 	Kind        Kind
 	Start       time.Time
@@ -337,6 +342,13 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 		Top:       input.Top,
 		Window:    resolved.Rate,
 	})
+	displayExpression, err := metricsqlguard.WithoutLabel(
+		expression,
+		metricsingest.ClusterLabel,
+	)
+	if err != nil {
+		return Result{}, fmt.Errorf("build display expression for %q: %w", definition.Name, err)
+	}
 
 	samples, _, err := service.execute(ctx, storageRequest{
 		Name:       definition.Name,
@@ -367,6 +379,7 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	return Result{
 		Query:       definition.Name,
 		Title:       definition.Title,
+		Expression:  displayExpression,
 		Unit:        definition.Unit,
 		Kind:        definition.Kind,
 		Start:       input.Start,

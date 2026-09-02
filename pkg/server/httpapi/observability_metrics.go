@@ -84,6 +84,7 @@ type metricsQueryIssueResponse struct {
 type metricsQueryResponse struct {
 	Query       string                       `json:"query"`
 	Title       string                       `json:"title"`
+	Expression  string                       `json:"expression"`
 	Kind        string                       `json:"kind"`
 	Unit        string                       `json:"unit"`
 	Start       time.Time                    `json:"start"`
@@ -202,6 +203,7 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 	writeSuccess(c, http.StatusOK, metricsQueryResponse{
 		Query:       result.Query,
 		Title:       result.Title,
+		Expression:  result.Expression,
 		Kind:        string(result.Kind),
 		Unit:        string(result.Unit),
 		Start:       result.Start,

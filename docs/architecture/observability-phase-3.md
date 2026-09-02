@@ -6,7 +6,7 @@
 > 状态：前三个切片已实现（见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR`
 > 与两个对应能力）、Agent 摄取端点与转发、Agent 侧**三个采集组件**（vmagent、kube-state-metrics、
 > node-exporter）的一体安装与卸载、Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、
-> 190 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
+> 396 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
 > 容器用量与 CPU 限流、Pod 网络、PVC 使用率与 inode、容器等待与退出原因、Namespace 配额、Pod 重启、
 > Pod 与节点状态、节点磁盘 IO 与网络、连接跟踪与 TCP 重传、PSI 压力停顿，加 CPU 模式分布与被抢占、
 > 三档负载与进程队列、上下文切换与中断、内存承诺/内核内存/Swap/主缺页/节点 OOM、文件描述符、运行时长与
@@ -550,7 +550,7 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 作者。VictoriaMetrics 的输出转义在极少数非 ASCII 标识符上无法被它自己读回，这类表达式由上面的重新解析检查
 拒绝——失败是关闭的方向。
 
-已实现的查询目录（190 个；下表列出基础目录，控制面、CoreDNS、工作负载网络、Pod 细分与 GPU 扩展见
+已实现的查询目录（396 个；下表列出基础目录，控制面、CoreDNS、工作负载网络、Pod 细分与 GPU 扩展见
 [容器监控指标覆盖](../features/observability-metric-coverage.md)）：
 
 | 查询 | 维度 | 依赖组件 | Namespace | Top N |

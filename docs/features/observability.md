@@ -4,7 +4,7 @@
 其下所有图表都描述这一个集群。日志计划作为独立应用呈现，不并入「监控」。
 
 当前状态：指标链路已完整——集群内三个采集组件、经 Agent 回传、Server 摄取与作用域改写、每集群摄取预算、
-集中存储，以及 Console 中一个自定义查询分区与九个图表分区共 190 个具名查询：CPU、内存、磁盘、网络、持久卷与 Kubernetes 对象
+集中存储，以及 Console 中一个自定义查询分区与九个图表分区共 396 个具名查询：CPU、内存、磁盘、网络、持久卷与 Kubernetes 对象
 状态，并补齐控制面组件、CoreDNS 与可选 NVIDIA GPU 指标，覆盖集群 / 节点 / Namespace / 工作负载 / Pod / 容器六个维度的用量、利用率、申请、限制、可分配量、
 CPU 限流、饱和度与状态原因，并向下补齐了节点自身的内核、磁盘延迟、套接字与时钟，向上补齐了 kubelet 本身
 的健康、Pod 级磁盘与 OOM，以及封锁节点、无法调度 Pod、Job 与持久卷对象状态，并让采集链路观察它自己。
@@ -23,7 +23,7 @@ Agent 提供摄取能力，集群侧也不部署采集组件，Console 会直接
 - 集群内部署三个组件：vmagent 负责抓取与回传（kubelet 的三个端点各抓一次：资源用量，cAdvisor 的限流、
   Pod 网络与磁盘、容器 OOM，以及卷统计与 kubelet 自身健康），kube-state-metrics 提供节点可分配量与容量、
   Pod 申请与限制、工作负载归属与放置节点、Pod 与节点状态、就绪与调度失败、容器等待与退出原因、
-  ResourceQuota、Job 状态、PVC 与持久卷状态，node-exporter 提供磁盘与磁盘延迟、文件系统、网络吞吐与包速率、负载、
+  ResourceQuota、Job/CronJob 生命周期、Service、Ingress、PVC 与持久卷状态，node-exporter 提供磁盘与磁盘延迟、文件系统、网络吞吐与包速率、负载、
   CPU 模式、连接跟踪与 TCP/UDP 计数、套接字、PSI 压力停顿、内核内存与分页、进程与文件描述符、时钟。
   三者由该集群的 Agent **一并安装、一并卸载**，
   Console 中一次操作即可，不需要使用者自己执行 `kubectl apply`；未安装采集的集群行为不变；
@@ -51,13 +51,14 @@ Agent 提供摄取能力，集群侧也不部署采集组件，Console 会直接
   | 集群总览 | 现在有没有出问题：节点就绪、Pod 运行 / 等待 / 失败、工作负载数量五个数字，加集群 CPU 与内存用量、利用率与申请占比、Pod 状态分布、容器重启六条曲线；需要下钻时切换 Pod、节点、容器、工作负载、批处理和存储对象视角 |
   | 核心组件 | API Server、Controller Manager、Scheduler、Proxy、Kubelet 与 CoreDNS 的健康、资源、请求、延迟和工作队列 |
   | 资源监控 | CPU、内存、节点自身状态与容器状态，按「维度 + 视角」两级选择 |
-  | 应用监控 | 工作负载与 Pod 的用量、申请、限制、占比、内存细分、进程与 Socket |
-  | 网络监控 | 节点、工作负载和 Pod 的带宽、包速率、错误、丢包、连接跟踪与 TCP/UDP 状态 |
+  | 应用监控 | 工作负载概览，以及 Deployment、StatefulSet、DaemonSet、Pod 的生命周期、副本、用量、申请、限制、占比、内存细分、进程与 Socket |
+  | 网络监控 | 集群、Namespace、节点、工作负载和 Pod 的带宽、包速率、错误、丢包、连接跟踪与 TCP/UDP 状态 |
   | 存储监控 | 持久卷使用率与 inode、文件系统、磁盘吞吐、IOPS、繁忙度、延迟与队列 |
-  | GPU 监控 | 自动发现已有 DCGM Exporter 后展示 GPU、显存、引擎、PCIe、NVLink、温度、功耗和 XID 错误 |
+  | GPU 监控 | 自动发现已有 DCGM Exporter 后，按 Cluster、Node、Pod 与设备展示 GPU、显存、引擎、PCIe、NVLink、时钟、能耗、温度、限制和 XID 错误 |
   | 采集质量 | 采集链路自己的状态：各抓取目标的健康度与耗时、每次抓取的样本数与新增序列、节点导出器各 collector 的失败节点数 |
 
-每个图表右上角都可展开为大图，保留时间范围选择、光标读数、图例统计与曲线开关。参考指标的逐类覆盖与平台差异见
+每个图表右上角都可展开为大图，也可查看和复制当前参数对应、且不含内部 `zke_cluster_id` 的可移植 MetricsQL；
+实际执行仍由 Server 强制注入目标 Cluster。大图保留时间范围选择、光标读数、图例统计与曲线开关。参考指标的逐类覆盖与平台差异见
 [容器监控指标覆盖](observability-metric-coverage.md)。
 
   计算资源的两级选择：
@@ -185,7 +186,7 @@ Agent 提供摄取能力，集群侧也不部署采集组件，Console 会直接
   产生的序列。两者的处置完全不同，因此不合并成一句"部分数据不可用"；
 - 摄取凭证由 Agent 在集群内生成，从不经过 Server，也不会出现在浏览器里；
 - kube-state-metrics 以 `--resources` 与 `--metric-allowlist` 双重收窄，只 `list`/`watch` Node、Pod、
-  Namespace、ResourceQuota、PVC、持久卷与五类工作负载对象，**不包含 Secret 与 ConfigMap**，也没有任何写权限。
+  Namespace、ResourceQuota、Service、Ingress、PVC、持久卷与五类工作负载对象，**不包含 Secret 与 ConfigMap**，也没有任何写权限。
   安装不需要为 Agent 增加权限：授予它的范围是 Agent 已持有权限的子集，这一点由 Kubernetes 强制；
 - 采集配置随安装下发，Server 不会改写已经在集群里运行的采集组件。因此指标族扩充之后，旧安装上的相关面板
   会一直为空，界面在这些面板的空态里写明需要在「采集接入」中重新安装采集，而不是让它读起来像"集群很闲"；

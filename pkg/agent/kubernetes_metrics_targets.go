@@ -38,7 +38,7 @@ import (
 // the restriction has to be written down rather than assumed.
 const kubeStateResources = "nodes,pods,namespaces,resourcequotas,deployments," +
 	"statefulsets,daemonsets,replicasets,jobs,cronjobs,persistentvolumeclaims," +
-	"persistentvolumes"
+	"persistentvolumes,services,ingresses"
 
 // kubeStateMetricFamilies is what kube-state-metrics is allowed to expose.
 //
@@ -66,6 +66,11 @@ var kubeStateMetricFamilies = []string{
 	// nothing else here reports: no other family carries both the Pod and the
 	// Node it landed on. One series per Pod, the same order as kube_pod_owner.
 	"kube_pod_info",
+	"kube_node_info",
+	"kube_pod_created",
+	"kube_pod_start_time",
+	"kube_pod_container_info",
+	"kube_pod_container_status_running",
 	// Workload and Pod health over time, which the live resource views can only
 	// show as "now".
 	"kube_pod_status_phase",
@@ -92,18 +97,39 @@ var kubeStateMetricFamilies = []string{
 	// identical to a healthy one in every usage curve here.
 	"kube_resourcequota",
 	"kube_deployment_status_replicas",
+	"kube_deployment_created",
+	"kube_deployment_spec_replicas",
+	"kube_deployment_status_replicas_ready",
+	"kube_deployment_status_replicas_updated",
+	"kube_deployment_status_replicas_unavailable",
 	"kube_deployment_status_replicas_available",
+	"kube_statefulset_created",
+	"kube_statefulset_metadata_generation",
+	"kube_statefulset_replicas",
 	"kube_statefulset_status_replicas",
 	"kube_statefulset_status_replicas_ready",
+	"kube_statefulset_status_replicas_available",
+	"kube_statefulset_status_replicas_updated",
+	"kube_daemonset_created",
 	"kube_daemonset_status_desired_number_scheduled",
 	"kube_daemonset_status_number_ready",
+	"kube_daemonset_status_number_unavailable",
 	// Batch work, which the replica families above deliberately exclude: a Job
 	// that has finished is not a workload missing replicas. A failing nightly
 	// Job is invisible in every other family here — its Pods are gone by the
 	// time anybody looks, and the object itself reports the failure.
 	"kube_job_status_active",
+	"kube_job_created",
+	"kube_job_info",
 	"kube_job_status_failed",
 	"kube_job_status_succeeded",
+	"kube_cronjob_created",
+	"kube_cronjob_status_active",
+	"kube_persistentvolumeclaim_info",
+	"kube_persistentvolumeclaim_resource_requests_storage_bytes",
+	"kube_service_info",
+	"kube_service_spec_type",
+	"kube_ingress_info",
 	// Storage objects, which the kubelet's volume statistics cannot report: it
 	// measures the volumes it has mounted, so a claim no Pod could bind and a
 	// volume released without being reclaimed are precisely the ones missing
@@ -257,9 +283,14 @@ func applyKubeStateMetrics(
 				APIGroups: []string{""},
 				Resources: []string{
 					"nodes", "pods", "namespaces", "resourcequotas",
-					"persistentvolumeclaims", "persistentvolumes",
+					"persistentvolumeclaims", "persistentvolumes", "services",
 				},
 				Verbs: []string{"list", "watch"},
+			},
+			{
+				APIGroups: []string{"networking.k8s.io"},
+				Resources: []string{"ingresses"},
+				Verbs:     []string{"list", "watch"},
 			},
 			{
 				APIGroups: []string{"apps"},

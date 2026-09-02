@@ -176,6 +176,13 @@ func TestQueryScopesToTheNamedClusterWithAnExactMatcher(t *testing.T) {
 	if result.ClusterID != clusterOne || result.ClusterName != "prod-sh" {
 		t.Fatalf("answer describes %q (%s)", result.ClusterName, result.ClusterID)
 	}
+	if result.Expression == "" || strings.Contains(result.Expression, "zke_cluster_id") ||
+		strings.Contains(result.Expression, clusterOne) {
+		t.Fatalf("portable expression contains Cluster identity: %q", result.Expression)
+	}
+	if !strings.Contains(result.Expression, "node_cpu_usage_seconds_total") {
+		t.Fatalf("portable expression lost the query semantics: %q", result.Expression)
+	}
 }
 
 func TestQueryRefusesAClusterOutsideVisibilityWithoutCallingStorage(t *testing.T) {

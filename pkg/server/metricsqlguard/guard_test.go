@@ -25,6 +25,21 @@ func enforce(t *testing.T, expression string) string {
 	return result.Expression
 }
 
+func TestWithoutLabelRemovesClusterIdentityEverywhere(t *testing.T) {
+	t.Parallel()
+	expression := `sum by (zke_cluster_id, namespace) (rate(a{zke_cluster_id="cluster",job="api"}[5m])) / on (zke_cluster_id, namespace) group_left(zke_cluster_id, pod) b{zke_cluster_id=~".*"}`
+	got, err := WithoutLabel(expression, testLabel)
+	if err != nil {
+		t.Fatalf("WithoutLabel returned error: %v", err)
+	}
+	if strings.Contains(got, testLabel) {
+		t.Fatalf("display expression still contains %s: %s", testLabel, got)
+	}
+	if !strings.Contains(got, `a{job="api"}`) || !strings.Contains(got, "by(namespace)") {
+		t.Fatalf("display expression lost non-cluster semantics: %s", got)
+	}
+}
+
 func TestEnforceInjectsTheClusterFilter(t *testing.T) {
 	t.Parallel()
 

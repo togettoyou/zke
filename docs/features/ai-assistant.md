@@ -68,8 +68,8 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `describe_resource` | 对象的关键状态、ZKE 归纳的问题点和指向它的 Event | `cluster.read` + `cluster.event.read` |
 | `list_nodes` | Node 状态、可调度性、容量与 kubelet 版本 | `cluster.read` |
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
-| `list_metric_queries` | 分页列出或按关键词搜索 190 个可用指标查询；每行包含查询名、标题、单位与参数标记 | `cluster.metrics.read` |
-| `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
+| `list_metric_queries` | 分页列出或按关键词搜索 396 个可用指标查询；每行包含查询名、标题、单位与参数标记 | `cluster.metrics.read` |
+| `query_metrics` | 执行目录中的一个查询，返回不含 ZKE Cluster 标识的可移植 MetricsQL，以及每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
 | `query_custom_metrics` | 执行一条自定义 MetricsQL；Server 把会话 Cluster 强制注入每个选择器，模型不提供 Cluster ID | `cluster.metrics.read` |
 | `list_cluster_changes` | 当前 Cluster 的变更时间线：合并普通提交与 AIOps 写工具调用，不把 DryRun 当作变更 | `audit.read` |
 | `verify_resource_change` | 验证对象当前健康、变更后 Warning Event、工作负载 generation 与副本收敛，返回三态结论 | `cluster.read` + `cluster.event.read` |
